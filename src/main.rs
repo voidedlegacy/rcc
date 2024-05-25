@@ -24,9 +24,14 @@ fn main() {
 
         let mut lexer = lexer::Lexer::new(input_file_name.clone(), &s);
         
-        // Example token reads
-        lexer.read_token();
-        lexer.read_token();
-        lexer.read_token();
+        // Test
+        loop {
+            match lexer.read_token() {
+                Some(t) => {
+                    println!("token: {}", t.val);
+                }
+                None => break,
+            }
+        }
     }
 }

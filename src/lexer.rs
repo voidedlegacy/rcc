@@ -1,7 +1,6 @@
 use std::iter;
 use std::str;
 
-#[derive(Debug)]
 pub enum TokenKind {
     Identifier,
     IntNumber,
@@ -9,14 +8,24 @@ pub enum TokenKind {
     String,
     Char,
     Symbol,
+    Newline,
     End,
 }
 
-#[derive(Debug)]
 pub struct Token {
-    kind: TokenKind,
-    val: String,
-    line: i32,
+    pub kind: TokenKind,
+    pub val: String,
+    pub line: i32,
+}
+
+impl Token {
+    pub fn new(kind: TokenKind, val: &str, line: i32) -> Token {
+        Token {
+            kind,
+            val: val.to_string(),
+            line,
+        }
+    }
 }
 
 pub struct Lexer<'a> {
@@ -38,17 +47,44 @@ impl<'a> Lexer<'a> {
         &self.filename
     }
 
-    pub fn read_token(&mut self) -> Token {
-        // TODO: implement proper token reading
-        if let Some(&ch) = self.peek.peek() {
-            println!("{}", ch);
-            self.peek.next();
+    pub fn read_identifier(&mut self) -> Token {
+        let mut ident = String::new();
+        while let Some(&c) = self.peek.peek() {
+            if c.is_alphanumeric() || c == '_' {
+                ident.push(c);
+                self.peek.next();
+            } else {
+                break;
+            }
         }
+        Token::new(TokenKind::Identifier, &ident, self.cur_line)
+    }
 
-        Token {
-            kind: TokenKind::End,
-            val: "".to_string(),
-            line: self.cur_line,
+    pub fn read_newline(&mut self) -> Token {
+        self.peek.next();
+        Token::new(TokenKind::Newline, "", self.cur_line)
+    }
+
+    pub fn read_symbol(&mut self) -> Token {
+        let c = self.peek.next().unwrap();
+        let mut sym = String::new();
+        sym.push(c);
+        Token::new(TokenKind::Symbol, &sym, self.cur_line)
+    }
+
+    pub fn read_token(&mut self) -> Option<Token> {
+        match self.peek.peek() {
+            Some(&c) => match c {
+                'a'..='z' | 'A'..='Z' | '_' => Some(self.read_identifier()),
+                ' ' | '\t' => {
+                    self.peek.next();
+                    self.read_token()
+                }
+                '\n' => Some(self.read_newline()),
+                _ => Some(self.read_symbol()),
+            },
+            None => None,
         }
     }
 }
+
