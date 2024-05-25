@@ -1,3 +1,5 @@
+mod version_info;
+
 fn main() {
-    println!("Hello, world!");
+    version_info::show_version();
 }
