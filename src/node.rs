@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::process;
 
 pub enum AST {
     Int(i32),
@@ -55,7 +56,10 @@ impl BinaryOpAst {
             ">=" => CBinOps::Ge,
             "<<" => CBinOps::Shl,
             ">>" => CBinOps::Shr,
-            _ => panic!("Unknown operator: {}", op),
+            _ => {
+                eprintln!("Unknown operator: {}", op);
+                process::exit(1);
+            }
         };
 
         BinaryOpAst {

@@ -1,11 +1,10 @@
-use std::io::{BufRead, BufReader};
-use std::fs::{File, OpenOptions};
-use std::io;
-use std::io::prelude::*;
+use std::fs::OpenOptions;
 use std::iter;
 use std::str;
 use std::collections::VecDeque;
 use std::path;
+use std::process;
+use std::io::Read;
 
 #[derive(PartialEq, Clone)]
 pub enum TokenKind {
@@ -46,8 +45,8 @@ pub struct Lexer<'a> {
 impl<'a> Lexer<'a> {
     pub fn new(filename: String, input: &'a str) -> Lexer<'a> {
         Lexer {
-            cur_line: 0,
-            filename,
+            cur_line: 1,
+            filename: filename.to_string(),
             peek: input.chars().peekable(),
             peek_buf: VecDeque::new(),
             buf: VecDeque::new(),
@@ -85,7 +84,14 @@ impl<'a> Lexer<'a> {
     }
 
     fn peek_char_is(&mut self, ch: char) -> bool {
-        self.peek_get().map_or(false, |&peekc| peekc == ch)
+        let line = self.cur_line;
+        let errf = || -> Option<&char> {
+            eprintln!("Error at line {}: expected '{}'", line, ch);
+            None
+        };
+
+        let peekc = self.peek_get().or_else(errf).unwrap();
+        *peekc == ch
     }
 
     fn skip(&mut self, s: &str) -> bool {
@@ -272,14 +278,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn read_cpp_include(&mut self) {
-        let mut filename = String::new();
-        if self.skip("<") {
-            while !self.peek_char_is('>') {
-                filename.push(self.peek_next().unwrap());
-            }
-            self.peek_next();
-        }
+    fn cpp_try_include(&mut self, filename: &str) -> Option<String> {
         let header_paths = vec![
             "./include/",
             "/include/",
@@ -288,22 +287,39 @@ impl<'a> Lexer<'a> {
             "/usr/include/x86_64-linux-gnu/",
             "",
         ];
-        let mut real_fname = String::new();
         for header_path in header_paths {
-            real_fname = format!("{}{}", header_path, filename);
-            if path::Path::new(&real_fname).exists() {
-                break;
+            let real_filename = format!("{}{}", header_path, filename);
+            if path::Path::new(&real_filename).exists() {
+                return Some(real_filename);
             }
         }
-        println!("include filename: {}", real_fname);
-        let mut file = OpenOptions::new().read(true).open(&real_fname).unwrap();
+        None
+    }
+
+    fn read_cpp_include(&mut self) {
+        let mut filename = String::new();
+        if self.skip("<") {
+            while !self.peek_char_is('>') {
+                filename.push(self.peek_next().unwrap());
+            }
+            self.peek_next();
+        }
+        let real_filename = match self.cpp_try_include(&filename) {
+            Some(f) => f,
+            _ => {
+                eprintln!("Error: {}: not found '{}'", self.cur_line, filename);
+                process::exit(-1)
+            }
+        };
+        println!("include filename: {}", real_filename);
+        let mut file = OpenOptions::new().read(true).open(&real_filename).unwrap();
         let mut body = String::new();
         file.read_to_string(&mut body).unwrap();
         let mut lexer = Lexer::new(filename.clone(), &body);
         while let Some(tok) = lexer.get() {
             self.buf.push_back(tok);
         }
-        println!("end filename: {}", real_fname);
+        println!("end of: {}", real_filename);
     }
 }
 
