@@ -1,4 +1,5 @@
 mod version_info;
+mod node;
 mod lexer;
 
 use std::fs::OpenOptions;
@@ -21,7 +22,6 @@ fn main() {
 
         let mut s = String::new();
         file.read_to_string(&mut s).expect("Failed to read the file");
-
         let mut lexer = lexer::Lexer::new(input_file_name.clone(), &s);
         
         // Test
