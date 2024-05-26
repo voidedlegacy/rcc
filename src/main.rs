@@ -22,11 +22,11 @@ fn main() {
 
         let mut s = String::new();
         file.read_to_string(&mut s).expect("Failed to read the file");
-        let mut lexer = lexer::Lexer::new(input_file_name.clone(), &s);
-        
-        // Test
+        let mut lexer = lexer::Lexer::new(input_file_name.clone(), &s); 
+        // test 
+        let mut tok: Option<lexer::Token>;
         loop {
-            match lexer.read_token() {
+            match lexer.get() {
                 Some(t) => {
                     println!("token: {}", t.val);
                 }

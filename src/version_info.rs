@@ -1,4 +1,4 @@
-const VERSION_STR: &str = "0.1.0";
+const VERSION_STR: &str = "0.1.1";
 
 pub fn show_version() {
     println!("rcc: (v{})", VERSION_STR);
