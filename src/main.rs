@@ -28,7 +28,7 @@ fn main() {
         loop {
             match lexer.get() {
                 Some(t) => {
-                    println!("token: {}", t.val);
+                    println!("token: {}{}", if t.space { " "} else {""}, t.val);
                 }
                 None => break,
             }

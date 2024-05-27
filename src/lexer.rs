@@ -4,9 +4,10 @@ use std::str;
 use std::collections::VecDeque;
 use std::path;
 use std::process;
+use crate::error;
 use std::io::Read;
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Debug)]
 pub enum TokenKind {
     Identifier,
     IntNumber,
@@ -17,9 +18,9 @@ pub enum TokenKind {
     Newline,
 }
 
-#[derive(Clone)]
 pub struct Token {
     pub kind: TokenKind,
+    pub space: bool, // leading space
     pub val: String,
     pub line: i32,
 }
@@ -28,6 +29,7 @@ impl Token {
     pub fn new(kind: TokenKind, val: &str, line: i32) -> Token {
         Token {
             kind,
+            space: false,
             val: val.to_string(),
             line,
         }
@@ -46,15 +48,15 @@ impl<'a> Lexer<'a> {
     pub fn new(filename: String, input: &'a str) -> Lexer<'a> {
         Lexer {
             cur_line: 1,
-            filename: filename.to_string(),
+            filename,
             peek: input.chars().peekable(),
             peek_buf: VecDeque::new(),
             buf: VecDeque::new(),
         }
     }
 
-    pub fn get_filename(&self) -> &str {
-        &self.filename
+    pub fn get_filename(&self) -> String {
+        self.filename.clone()
     }
 
     fn peek_get(&mut self) -> Option<&char> {
@@ -86,7 +88,7 @@ impl<'a> Lexer<'a> {
     fn peek_char_is(&mut self, ch: char) -> bool {
         let line = self.cur_line;
         let errf = || -> Option<&char> {
-            eprintln!("Error at line {}: expected '{}'", line, ch);
+            error::error_exit(line, format!("expected '{}'", ch).as_str());
             None
         };
 
@@ -209,7 +211,13 @@ impl<'a> Lexer<'a> {
                 'a'..='z' | 'A'..='Z' | '_' => Some(self.read_identifier()),
                 ' ' | '\t' => {
                     self.peek_next();
-                    self.read_token()
+                    // set a leading space
+                    fn f(tok: Token) -> Option<Token> {
+                        let mut t = tok;
+                        t.space = true;
+                        Some(t)
+                    }
+                    self.read_token().and_then(f)
                 }
                 '0'..='9' => Some(self.read_number_literal()),
                 '\"' => Some(self.read_string_literal()),
@@ -244,37 +252,41 @@ impl<'a> Lexer<'a> {
 
     pub fn read_token(&mut self) -> Option<Token> {
         let t = self.do_read_token();
-        if let Some(ref tok) = t {
-            if tok.kind == TokenKind::Newline {
-                return self.read_token();
+        match t {
+            Some(tok) => {
+                match tok.kind {
+                    TokenKind::Newline => self.read_token(),
+                    _ => Some(tok),
+                }
             }
+            _ => t,
         }
-        t
     }
 
     pub fn get(&mut self) -> Option<Token> {
         let t = self.read_token();
-        if let Some(ref tok) = t {
-            if tok.val == "#" {
-                // preprocessor directive
-                self.read_cpp_directive();
-                self.get()
-            } else {
-                Some(tok.clone())
+        match t {
+            Some(tok) => {
+                if tok.val == "#" {
+                    // preprocessor directive
+                    self.read_cpp_directive();
+                    self.get()
+                } else {
+                    Some(tok)
+                }
             }
-        } else {
-            t
+            _ => t,
         }
     }
 
     // for c preprocessor
 
     fn read_cpp_directive(&mut self) {
-        if let Some(tok) = self.do_read_token() { // cpp directive
-            match tok.val.as_str() {
-                "include" => self.read_cpp_include(),
-                _ => {}
-            }
+        let t = self.do_read_token(); // cpp directive
+        match t.ok_or("error").unwrap().val.as_str() {
+            "include" => self.read_cpp_include(),
+            "define" => self.read_cpp_define(),
+            _ => {}
         }
     }
 
@@ -307,7 +319,7 @@ impl<'a> Lexer<'a> {
         let real_filename = match self.cpp_try_include(&filename) {
             Some(f) => f,
             _ => {
-                eprintln!("Error: {}: not found '{}'", self.cur_line, filename);
+                eprintln!("error: {}: not found '{}'", self.cur_line, filename);
                 process::exit(-1)
             }
         };
@@ -320,6 +332,29 @@ impl<'a> Lexer<'a> {
             self.buf.push_back(tok);
         }
         println!("end of: {}", real_filename);
+    }
+
+    fn read_cpp_define(&mut self) {
+        let mcro = self.do_read_token().unwrap();
+        assert_eq!(mcro.kind, TokenKind::Identifier);
+
+        if self.skip("(") {
+            error::error_exit(self.cur_line, "unsupported");
+        }
+
+        println!("macro name: {}", mcro.val);
+
+        let mut body: Vec<Token> = Vec::new();
+        print!("macro body: ");
+        loop {
+            let c = self.do_read_token().unwrap();
+            if c.kind == TokenKind::Newline {
+                break;
+            }
+            print!("{}{}", if c.space { " " } else { "" }, c.val);
+            body.push(c);
+        }
+        println!();
     }
 }
 
