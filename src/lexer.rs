@@ -1,18 +1,26 @@
+use std::io::{BufRead, BufReader};
 use std::fs::OpenOptions;
+use std::io;
+use std::io::prelude::*;
 use std::iter;
 use std::str;
 use std::collections::VecDeque;
 use std::path;
 use std::process;
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use crate::error;
-use std::io::Read;
 
-enum Macro {
-    Object(Vec<Token>), // Use `Vec` instead of `vec`
+lazy_static! {
+    static ref MacroMap: Arc<Mutex<HashMap<String, Macro>>> = Arc::new(Mutex::new(HashMap::new()));
 }
 
-#[derive(PartialEq, Debug)]
+pub enum Macro {
+    Object(Vec<Token>),
+    // FuncLile()
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub enum TokenKind {
     Identifier,
     IntNumber,
@@ -23,6 +31,7 @@ pub enum TokenKind {
     Newline,
 }
 
+#[derive(PartialEq, Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
     pub space: bool, // leading space
@@ -47,18 +56,16 @@ pub struct Lexer<'a> {
     peek: iter::Peekable<str::Chars<'a>>,
     peek_buf: VecDeque<char>,
     buf: VecDeque<Token>,
-    macro_map: HashMap<String, Macro>,
 }
 
 impl<'a> Lexer<'a> {
     pub fn new(filename: String, input: &'a str) -> Lexer<'a> {
         Lexer {
             cur_line: 1,
-            filename,
+            filename: filename.to_string(),
             peek: input.chars().peekable(),
             peek_buf: VecDeque::new(),
             buf: VecDeque::new(),
-            macro_map: HashMap::new(),
         }
     }
 
@@ -70,11 +77,11 @@ impl<'a> Lexer<'a> {
         self.peek_buf.front().or_else(|| self.peek.peek())
     }
 
-    fn peek_next(&mut self) -> Option<char> {
+    fn peek_next(&mut self) -> char {
         if let Some(c) = self.peek_buf.pop_front() {
-            Some(c)
+            c
         } else {
-            self.peek.next()
+            self.peek.next().unwrap()
         }
     }
 
@@ -83,13 +90,11 @@ impl<'a> Lexer<'a> {
     }
 
     fn peek_next_char_is(&mut self, ch: char) -> bool {
-        if let Some(nextc) = self.peek_next() {
-            if nextc == ch {
-                return true;
-            }
-            self.peek_unget(nextc);
-        }
-        false
+        let c = self.peek_next();
+        let nextc = self.peek_next();
+        self.peek_unget(c);
+        self.peek_unget(nextc);
+        nextc == ch
     }
 
     fn peek_char_is(&mut self, ch: char) -> bool {
@@ -104,14 +109,14 @@ impl<'a> Lexer<'a> {
     }
 
     fn skip(&mut self, s: &str) -> bool {
-        if let Some(next) = self.read_token() {
-            if next.val == s && next.kind != TokenKind::String && next.kind != TokenKind::Char {
-                return true;
-            } else {
-                self.buf.push_back(next);
-            }
+        let next = self.read_token();
+        let n = next.ok_or("error").unwrap();
+        if n.val == s && n.kind != TokenKind::String && n.kind != TokenKind::Char {
+            true
+        } else {
+            self.buf.push_back(n);
+            false
         }
-        false
     }
 
     fn unget(&mut self, t: Token) {
@@ -120,13 +125,15 @@ impl<'a> Lexer<'a> {
 
     pub fn read_identifier(&mut self) -> Token {
         let mut ident = String::new();
-        while let Some(&c) = self.peek_get() {
-            if c.is_alphanumeric() || c == '_' {
-                ident.push(c);
-                self.peek_next();
-            } else {
-                break;
-            }
+        loop {
+            match self.peek_get() {
+                Some(&c) => match c {
+                    'a'..='z' | 'A'..='Z' | '_' | '0'..='9' => ident.push(c),
+                    _ => break,
+                },
+                _ => break,
+            };
+            self.peek_next();
         }
         Token::new(TokenKind::Identifier, &ident, self.cur_line)
     }
@@ -134,17 +141,20 @@ impl<'a> Lexer<'a> {
     fn read_number_literal(&mut self) -> Token {
         let mut num = String::new();
         let mut is_float = false;
-        while let Some(&c) = self.peek_get() {
-            match c {
-                '.' | '0'..='9' => {
-                    num.push(c);
-                    if c == '.' {
-                        is_float = true;
+        loop {
+            match self.peek_get() {
+                Some(&c) => match c {
+                    '.' | '0'..='9' => {
+                        num.push(c);
+                        if c == '.' {
+                            is_float = true;
+                        }
                     }
-                    self.peek_next();
-                }
+                    _ => break,
+                },
                 _ => break,
-            }
+            };
+            self.peek_next();
         }
         if is_float {
             Token::new(TokenKind::FloatNumber, &num, self.cur_line)
@@ -160,31 +170,31 @@ impl<'a> Lexer<'a> {
     }
 
     pub fn read_symbol(&mut self) -> Token {
-        let c = self.peek_next().unwrap();
+        let c = self.peek_next();
         let mut sym = String::new();
         sym.push(c);
         match c {
             '+' | '-' | '*' | '/' | '%' | '=' | '^' | '!' => {
                 if self.peek_char_is('=') {
-                    sym.push(self.peek_next().unwrap());
+                    sym.push(self.peek_next());
                 }
             }
             '<' | '>' | '&' | '|' => {
                 if self.peek_char_is(c) {
-                    sym.push(self.peek_next().unwrap());
+                    sym.push(self.peek_next());
                 }
                 if self.peek_char_is('=') {
-                    sym.push(self.peek_next().unwrap());
+                    sym.push(self.peek_next());
                 }
             }
             '.' => {
                 if self.peek_char_is('.') && self.peek_next_char_is('.') {
-                    sym.push(self.peek_next().unwrap());
-                    sym.push(self.peek_next().unwrap());
+                    sym.push(self.peek_next());
+                    sym.push(self.peek_next());
                 }
             }
             _ => {}
-        }
+        };
         Token::new(TokenKind::Symbol, &sym, self.cur_line)
     }
 
@@ -192,7 +202,7 @@ impl<'a> Lexer<'a> {
         self.peek_next();
         let mut s = String::new();
         while !self.peek_char_is('\"') {
-            s.push(self.peek_next().unwrap());
+            s.push(self.peek_next());
         }
         self.peek_next();
         Token::new(TokenKind::String, &s, self.cur_line)
@@ -202,7 +212,7 @@ impl<'a> Lexer<'a> {
         self.peek_next();
         let mut s = String::new();
         while !self.peek_char_is('\'') {
-            s.push(self.peek_next().unwrap());
+            s.push(self.peek_next());
         }
         self.peek_next();
         Token::new(TokenKind::Char, &s, self.cur_line)
@@ -264,19 +274,31 @@ impl<'a> Lexer<'a> {
     pub fn read_token(&mut self) -> Option<Token> {
         let t = self.do_read_token();
         match t {
-            Some(tok) => {
-                match tok.kind {
-                    TokenKind::Newline => self.read_token(),
-                    _ => Some(tok),
-                }
-            }
+            Some(tok) => match tok.kind {
+                TokenKind::Newline => self.read_token(),
+                _ => Some(tok),
+            },
             _ => t,
         }
     }
 
+    fn expand(&mut self, token: Option<Token>) -> Option<Token> {
+        token.and_then(|tok| match MacroMap.lock().unwrap().get(tok.val.as_str()) {
+            Some(a) => match a {
+                Macro::Object(ref t) => {
+                    for tt in t.iter().rev() {
+                        self.unget(tt.clone());
+                    }
+                    self.read_token()
+                }
+            },
+            None => Some(tok),
+        })
+    }
+
     pub fn get(&mut self) -> Option<Token> {
         let t = self.read_token();
-        match t {
+        let tok = match t {
             Some(tok) => {
                 if tok.val == "#" {
                     // preprocessor directive
@@ -286,8 +308,9 @@ impl<'a> Lexer<'a> {
                     Some(tok)
                 }
             }
-            _ => t,
-        }
+            _ => return t,
+        };
+        self.expand(tok)
     }
 
     // for c preprocessor
@@ -323,7 +346,7 @@ impl<'a> Lexer<'a> {
         let mut filename = String::new();
         if self.skip("<") {
             while !self.peek_char_is('>') {
-                filename.push(self.peek_next().unwrap());
+                filename.push(self.peek_next());
             }
             self.peek_next();
         }
@@ -342,10 +365,6 @@ impl<'a> Lexer<'a> {
         while let Some(tok) = lexer.get() {
             self.buf.push_back(tok);
         }
-        // copying macros 
-        for (key, val) in lexer.macro_map {
-            self.macro_map.insert(key, val);
-        }
         println!("end of: {}", real_filename);
     }
 
@@ -353,7 +372,7 @@ impl<'a> Lexer<'a> {
         let mcro = self.do_read_token().unwrap();
         assert_eq!(mcro.kind, TokenKind::Identifier);
 
-        // TODO: func like macro is unsupported now...
+        // TODO: func like macro is unsupported now..
         if self.skip("(") {
             error::error_exit(self.cur_line, "unsupported");
         }
@@ -371,6 +390,6 @@ impl<'a> Lexer<'a> {
             body.push(c);
         }
         println!();
-        self.macro_map.insert(mcro.val, Macro::Object(body));
+        MacroMap.lock().unwrap().insert(mcro.val, Macro::Object(body));
     }
 }

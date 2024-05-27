@@ -5,3 +5,4 @@ edition = "2021"
 authors = ["Jack Boecker <boeckerjack@protonmail.com"]
 
 [dependencies]
+lazy_static = "1.4.0"

@@ -1,9 +1,11 @@
 extern crate rcc;
+
 use rcc::version_info;
 use rcc::lexer;
 
 use std::fs::OpenOptions;
 use std::io::Read;
+
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
